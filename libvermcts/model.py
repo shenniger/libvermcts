@@ -68,28 +68,38 @@ class ModelWrapper:
 
         return generated_text
 
-    def generate_one_token(self, prompt: str, temperature: float = 0.8, top_p: float = 0.95) -> str:
+    def generate_one_token(self, prompt: str, add: list[int] = None, temperature: float = 0.8, top_p: float = 0.95) -> int:
         """
-        Generate a single token from a prompt.
+        Generate a single token from a prompt and optional additional tokens.
 
         Args:
-            prompt: Input prompt string
+            prompt: Input prompt string (will be encoded to tokens)
+            add: Optional list of token IDs to append to the prompt tokens
             temperature: Sampling temperature (default: 0.8)
             top_p: Nucleus sampling parameter (default: 0.95)
 
         Returns:
-            The next token as a string
+            The next token ID as an integer
         """
         # Tokenize the prompt
-        inputs = self.tokenizer(prompt, return_tensors="pt", padding=True)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        prompt_tokens = self.tokenizer.encode(prompt, return_tensors="pt")
 
-        prompt_length = inputs["input_ids"].shape[1]
+        # Append the add tokens if provided
+        if add:
+            add_tensor = torch.tensor([add], dtype=torch.long)
+            input_ids = torch.cat([prompt_tokens, add_tensor], dim=1)
+        else:
+            input_ids = prompt_tokens
+
+        # Move to device
+        input_ids = input_ids.to(self.device)
+
+        context_length = input_ids.shape[1]
 
         # Generate one token
         with torch.no_grad():
             outputs = self.model.generate(
-                **inputs,
+                input_ids,
                 max_new_tokens=1,
                 do_sample=True,
                 temperature=temperature,
@@ -98,8 +108,19 @@ class ModelWrapper:
                 use_cache=True,
             )
 
-        # Decode only the new token (skip the prompt tokens)
-        new_token_ids = outputs[0][prompt_length:]
-        new_token = self.tokenizer.decode(new_token_ids, skip_special_tokens=True)
+        # Return only the new token ID (skip the context tokens)
+        new_token_id = outputs[0][context_length:][0].item()
 
-        return new_token
+        return new_token_id
+
+    def decode_tokens(self, token_ids: list[int]) -> str:
+        """
+        Decode a list of token IDs to a string.
+
+        Args:
+            token_ids: List of token IDs
+
+        Returns:
+            Decoded string
+        """
+        return self.tokenizer.decode(token_ids, skip_special_tokens=True)

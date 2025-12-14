@@ -70,14 +70,17 @@ def mcts(prompt: str, verifier, model: str, max_tokens: int = 10000, expansion_c
             return
 
         base = node.state
-        add = ""
+        add_tokens = []
 
         # Keep generating tokens until we get a clear verdict
         while tokens_used < max_tokens:
             # Generate one more token
-            new_token = model_wrapper.generate_one_token(base + add)
-            add += new_token
+            new_token_id = model_wrapper.generate_one_token(base, add_tokens)
+            add_tokens.append(new_token_id)
             tokens_used += 1
+
+            # Redecode the entire add sequence
+            add = model_wrapper.decode_tokens(add_tokens)
 
             # Verify the addition
             result = verifier(base, add)
