@@ -17,7 +17,7 @@ from libvermcts import mcts, VerifierResult
 DAFNY_PROMPT = """<start_of_turn>user
 ### Spec: In Dafny, write an ADT for arithmetic expressions comprising constants, variables and binary additions. Then write an evaluator taking an expression and an environment (a function that takes a variable name and returns a number) and returning the number resulting from evaluation. Then write an optimizer taking an expression and returning an expression with all additions by 0 removed. Then prove that the optimizer preserves the semantics as defined by the evaluation function.
 
-Do not place this into a module.
+Do not place this into a module. Do not create a module `ArithmeticExpression`.
 
 <end_of_turn>
 <start_of_turn>model
@@ -152,8 +152,8 @@ def dafny_verifier(base: str, add: str) -> VerifierResult:
 
 def main():
     prompt = DAFNY_PROMPT
-    model = "codellama/CodeLlama-34b-Instruct-hf"
-    #model = "google/gemma-3-27b-it"
+    #model = "codellama/CodeLlama-34b-Instruct-hf"
+    model = "google/gemma-3-1b-it"
 
     print("=" * 70)
     print("Dafny Code Generation with MCTS and Verification")

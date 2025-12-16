@@ -124,3 +124,61 @@ class ModelWrapper:
             Decoded string
         """
         return self.tokenizer.decode(token_ids, skip_special_tokens=True)
+
+    def generate_one_token_with_logits(self, prompt: str, add: list[int] = None, temperature: float = 0.8, top_p: float = 0.95) -> tuple[int, float]:
+        """
+        Generate a single token from a prompt and return the token with its probability.
+
+        Args:
+            prompt: Input prompt string (will be encoded to tokens)
+            add: Optional list of token IDs to append to the prompt tokens
+            temperature: Sampling temperature (default: 0.8)
+            top_p: Nucleus sampling parameter (default: 0.95)
+
+        Returns:
+            Tuple of (token_id, logit) where logit is the probability of the chosen token (0.0 to 1.0)
+        """
+        # Tokenize the prompt
+        prompt_tokens = self.tokenizer.encode(prompt, return_tensors="pt")
+
+        # Append the add tokens if provided
+        if add:
+            add_tensor = torch.tensor([add], dtype=torch.long)
+            input_ids = torch.cat([prompt_tokens, add_tensor], dim=1)
+        else:
+            input_ids = prompt_tokens
+
+        # Move to device
+        input_ids = input_ids.to(self.device)
+
+        # Get logits from the model
+        with torch.no_grad():
+            outputs = self.model(input_ids)
+            logits = outputs.logits[0, -1, :]  # Get logits for the last position
+
+            # Apply temperature
+            logits = logits / temperature
+
+            # Apply top-p filtering
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+
+            # Remove tokens with cumulative probability above the threshold
+            sorted_indices_to_remove = cumulative_probs > top_p
+            # Keep at least 1 token
+            sorted_indices_to_remove[0] = False
+
+            # Create a mask for the original indices
+            indices_to_remove = sorted_indices_to_remove.scatter(0, sorted_indices, sorted_indices_to_remove)
+            logits[indices_to_remove] = float('-inf')
+
+            # Convert to probabilities
+            probs = torch.softmax(logits, dim=-1)
+
+            # Sample from the distribution
+            sampled_token_id = torch.multinomial(probs, num_samples=1).item()
+
+            # Get the probability of the sampled token
+            sampled_prob = probs[sampled_token_id].item()
+
+        return sampled_token_id, sampled_prob
