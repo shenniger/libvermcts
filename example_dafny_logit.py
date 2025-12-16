@@ -9,7 +9,7 @@ while tracking token probabilities.
 import subprocess
 import tempfile
 import os
-from libvermcts import mcts_logits, VerifierResult
+from libvermcts import mcts_logits, VerifierResult, ModelWrapper
 
 
 # Prompt from problem_opt0_dafny_sanity_check in default_prompts.py
@@ -170,6 +170,62 @@ def dafny_verifier(base: str, add: str, last_logit: float, logit_product: float)
                 return VerifierResult.BAD
 
 
+def compute_token_logits(model_wrapper: ModelWrapper, prompt: str, generated_text: str):
+    """
+    Compute logits for each token in the generated text.
+
+    Args:
+        model_wrapper: The model wrapper to use for computing logits
+        prompt: The base prompt
+        generated_text: The generated text to analyze
+
+    Returns:
+        List of (token_text, logit) tuples
+    """
+    print("\nComputing logits for each token in the final result...")
+
+    # Tokenize the generated text
+    tokens = model_wrapper.tokenizer.encode(generated_text)
+
+    token_logits = []
+
+    # For each token, compute its probability given the previous context
+    for i in range(len(tokens)):
+        # Get tokens up to (but not including) current position
+        context_tokens = tokens[:i]
+
+        # Get the current token
+        current_token = tokens[i]
+
+        # Compute logit for this token
+        import torch
+        with torch.no_grad():
+            # Prepare input
+            if context_tokens:
+                input_ids = torch.tensor([model_wrapper.tokenizer.encode(prompt) + context_tokens])
+            else:
+                input_ids = torch.tensor([model_wrapper.tokenizer.encode(prompt)])
+
+            input_ids = input_ids.to(model_wrapper.device)
+
+            # Get logits
+            outputs = model_wrapper.model(input_ids)
+            logits = outputs.logits[0, -1, :]
+
+            # Convert to probabilities
+            probs = torch.softmax(logits, dim=-1)
+
+            # Get probability of the current token
+            token_prob = probs[current_token].item()
+
+        # Decode the token to text
+        token_text = model_wrapper.tokenizer.decode([current_token])
+
+        token_logits.append((token_text, token_prob, i))
+
+    return token_logits
+
+
 def main():
     prompt = DAFNY_PROMPT
     model = "codellama/CodeLlama-34b-Instruct-hf"
@@ -209,6 +265,35 @@ def main():
             print(f"Output: {final_check['out']}")
 
         print(f"\nTotal verifier calls: {verifier_call_count}")
+
+        # Compute logits for all tokens in the final result
+        print("\n" + "=" * 70)
+        print("Analyzing token probabilities in final result...")
+        print("=" * 70)
+
+        # Initialize model wrapper for analysis
+        model_wrapper = ModelWrapper(model)
+
+        # Compute logits for each token
+        token_logits = compute_token_logits(model_wrapper, prompt, result)
+
+        print(f"Total tokens in result: {len(token_logits)}")
+
+        # Sort by logit value (ascending) to get lowest probabilities first
+        sorted_tokens = sorted(token_logits, key=lambda x: x[1])
+
+        # Display the 20 tokens with lowest logit values
+        print("\n" + "=" * 70)
+        print("20 Tokens with LOWEST Logit Values:")
+        print("=" * 70)
+        print(f"{'Rank':<6} {'Logit':<12} {'Position':<10} {'Token (repr)':<30}")
+        print("-" * 70)
+        for rank, (token_text, logit, position) in enumerate(sorted_tokens[:20], 1):
+            token_repr = repr(token_text)[:30]  # Truncate long representations
+            print(f"{rank:<6} {logit:<12.8f} {position:<10} {token_repr:<30}")
+
+        print("=" * 70)
+
     else:
         print("\n" + "=" * 70)
         print("Failed to generate valid Dafny code within token budget.")
