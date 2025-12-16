@@ -180,7 +180,8 @@ def compute_token_logits(model_wrapper: ModelWrapper, prompt: str, generated_tex
         generated_text: The generated text to analyze
 
     Returns:
-        List of (token_text, logit) tuples
+        List of (token_text, probability, char_start, char_end) tuples
+        where char_start and char_end are the character positions in the decoded text
     """
     print("\nComputing logits for each token in the final result...")
 
@@ -188,6 +189,7 @@ def compute_token_logits(model_wrapper: ModelWrapper, prompt: str, generated_tex
     tokens = model_wrapper.tokenizer.encode(generated_text)
 
     token_logits = []
+    char_pos = 0  # Track current character position in decoded text
 
     # For each token, compute its probability given the previous context
     for i in range(len(tokens)):
@@ -220,8 +222,11 @@ def compute_token_logits(model_wrapper: ModelWrapper, prompt: str, generated_tex
 
         # Decode the token to text
         token_text = model_wrapper.tokenizer.decode([current_token])
+        token_length = len(token_text)
 
-        token_logits.append((token_text, token_prob, i))
+        # Store with character positions in the decoded text
+        token_logits.append((token_text, token_prob, char_pos, char_pos + token_length))
+        char_pos += token_length
 
     return token_logits
 
@@ -256,7 +261,7 @@ def main():
         print("=" * 70)
 
         # Verify the final result
-        final_code = extract_dafny_code(prompt + result)
+        final_code = extract_dafny_code(result)
         final_check = check_dafny(final_code)
         if final_check['status'] == 0:
             print("✓ Final verification: PASSED")
@@ -286,11 +291,116 @@ def main():
         print("\n" + "=" * 70)
         print("20 Tokens with LOWEST Logit Values:")
         print("=" * 70)
-        print(f"{'Rank':<6} {'Logit':<12} {'Position':<10} {'Token (repr)':<30}")
+        print(f"{'Rank':<6} {'Logit':<12} {'Char Range':<15} {'Token (repr)':<30}")
         print("-" * 70)
-        for rank, (token_text, logit, position) in enumerate(sorted_tokens[:20], 1):
+        for rank, (token_text, logit, char_start, char_end) in enumerate(sorted_tokens[:20], 1):
             token_repr = repr(token_text)[:30]  # Truncate long representations
-            print(f"{rank:<6} {logit:<12.8f} {position:<10} {token_repr:<30}")
+            char_range = f"{char_start}-{char_end}"
+            print(f"{rank:<6} {logit:<12.8f} {char_range:<15} {token_repr:<30}")
+
+        # Output table in LaTeX format
+        print("\n" + "=" * 70)
+        print("LaTeX Table:")
+        print("=" * 70)
+        print("% Add \\usepackage{booktabs} to your preamble for better tables")
+        print()
+        print("\\begin{table}[h]")
+        print("\\centering")
+        print("\\begin{tabular}{rlrl}")
+        print("\\toprule")
+        print("Rank & Logit & Char Range & Token \\\\")
+        print("\\midrule")
+        for rank, (token_text, logit, char_start, char_end) in enumerate(sorted_tokens[:20], 1):
+            # Escape LaTeX special characters in token text
+            token_escaped = token_text
+            token_escaped = token_escaped.replace('\\', '\\textbackslash{}')
+            token_escaped = token_escaped.replace('{', '\\{')
+            token_escaped = token_escaped.replace('}', '\\}')
+            token_escaped = token_escaped.replace('_', '\\_')
+            token_escaped = token_escaped.replace('%', '\\%')
+            token_escaped = token_escaped.replace('&', '\\&')
+            token_escaped = token_escaped.replace('#', '\\#')
+            token_escaped = token_escaped.replace('$', '\\$')
+            token_escaped = token_escaped.replace('^', '\\textasciicircum{}')
+            token_escaped = token_escaped.replace('~', '\\textasciitilde{}')
+            # Use \texttt for monospace display of token
+            token_display = f"\\texttt{{{token_escaped}}}"
+            # Truncate if too long
+            if len(token_display) > 40:
+                token_display = token_display[:37] + "..."
+            char_range = f"{char_start}--{char_end}"
+            print(f"{rank} & {logit:.8f} & {char_range} & {token_display} \\\\")
+        print("\\bottomrule")
+        print("\\end{tabular}")
+        print("\\caption{20 Tokens with Lowest Logit Values}")
+        print("\\label{tab:lowest-logits}")
+        print("\\end{table}")
+
+        # Reconstruct text with highlighted tokens
+        print("\n" + "=" * 70)
+        print("Generated Code with Lowest Logit Tokens Highlighted")
+        print("=" * 70)
+
+        # Get set of character ranges to highlight (top 20 lowest probability tokens)
+        highlight_ranges = set((char_start, char_end) for _, _, char_start, char_end in sorted_tokens[:20])
+
+        # Terminal output with ANSI colors
+        print("\n" + "-" * 70)
+        print("Terminal Output (with red highlighting):")
+        print("-" * 70)
+        for token_text, prob, char_start, char_end in token_logits:
+            if (char_start, char_end) in highlight_ranges:
+                # ANSI red color code
+                print(f"\033[91m{token_text}\033[0m", end='')
+            else:
+                print(token_text, end='')
+        print()  # Final newline
+        print("-" * 70)
+
+        # LaTeX output with highlighted code
+        print("\n" + "-" * 70)
+        print("LaTeX Output:")
+        print("-" * 70)
+        print("% Add to your LaTeX preamble:")
+        print("% \\usepackage{listings}")
+        print("% \\usepackage{xcolor}")
+        print("% \\lstset{basicstyle=\\ttfamily\\small, escapechar=|}")
+        print("%")
+        print("% Then use:")
+        print()
+
+        def escape_latex_in_lstlisting(text):
+            """
+            Escape text for use inside |\textcolor{...}{HERE}| in lstlisting.
+            We need to escape LaTeX special characters.
+            """
+            # Backslash must be first
+            text = text.replace('\\', '\\textbackslash{}')
+            text = text.replace('{', '\\{')
+            text = text.replace('}', '\\}')
+            text = text.replace('_', '\\_')
+            text = text.replace('%', '\\%')
+            text = text.replace('&', '\\&')
+            text = text.replace('#', '\\#')
+            text = text.replace('$', '\\$')
+            text = text.replace('^', '\\textasciicircum{}')
+            text = text.replace('~', '\\textasciitilde{}')
+            text = text.replace('|', '\\textbar{}')
+            return text
+
+        print("\\begin{lstlisting}")
+        for token_text, prob, char_start, char_end in token_logits:
+            if (char_start, char_end) in highlight_ranges:
+                # Escape the token text for use in LaTeX
+                escaped = escape_latex_in_lstlisting(token_text)
+                print(f"|\\textcolor{{red}}{{{escaped}}}|", end='')
+            else:
+                # In lstlisting, most characters are literal, but we should
+                # still be careful. The escape char | is handled above.
+                print(token_text, end='')
+        print()  # Final newline
+        print("\\end{lstlisting}")
+        print("-" * 70)
 
         print("=" * 70)
 
